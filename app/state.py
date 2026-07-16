@@ -81,6 +81,11 @@ class AppState:
     hp_query: str = ""
     chat_input: str = ""
 
+    # Computed FrequencyResponse cache for the Tune screen; fr_key tracks
+    # the (measurement path, target) pair the cache was built from.
+    fr: object | None = None
+    fr_key: tuple | None = None
+
     toast_text: str | None = None
 
     def reset_bands(self) -> None:

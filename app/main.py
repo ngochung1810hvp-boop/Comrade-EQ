@@ -49,7 +49,7 @@ def main(page: ft.Page) -> None:
         elif state.screen == "device":
             page.controls.append(device_setup_screen(state, entries, devices, go_welcome, go_tune))
         else:
-            page.controls.append(tune_screen(state, go_welcome))
+            page.controls.append(tune_screen(page, state, devices, go_device))
         page.update()
 
     def go_welcome(e=None) -> None:

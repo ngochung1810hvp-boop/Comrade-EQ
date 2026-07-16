@@ -1,66 +1,324 @@
-"""Screen 3 — Tune.
+"""Screen 3 — Tune (BUILD_PLAN.md GD2).
 
-Placeholder for GD0: the full workspace (graph, 10-band strip, export bar,
-DAC panel, chat drawer) is BUILD_PLAN.md phases GD2-GD4. This stub only
-makes the screen reachable so routing can be exercised end-to-end.
+Layout per handoff: 66px icon rail | scrollable main column (header, graph
+card, 10-band card, export bar) | 296px DAC side panel. The chat drawer is
+GD4 scope and not mounted yet.
 """
 
 import flet as ft
 
+import eq_model
 import theme
-from ui.widgets import Pressable
+from equalize import compute, list_targets
+from exporters import export_file
+from state import AppState
+from ui.tune.band_strip import BandStripCard
+from ui.tune.dac_panel import DacPanel
+from ui.tune.export_bar import ExportBar
+from ui.tune.graph import GraphCard
+from ui.tune.save_modal import open_save_modal
+from ui.widgets import Pressable, pill_toggle, show_toast
+
+TARGET_MENU_WIDTH = 320
+TARGET_MENU_HEIGHT = 340
 
 
-def tune_screen(state, on_back_to_welcome) -> ft.Control:
+def _default_target(form: str, targets: list[str]) -> str:
+    preferred = (
+        "Harman in-ear 2019" if form in ("in-ear", "earbud") else "Harman over-ear 2018"
+    )
+    return preferred if preferred in targets else targets[0]
+
+
+def _ensure_fr(state: AppState, targets: list[str]) -> None:
+    """Computes/caches the processed FrequencyResponse for headphone+target."""
+    if state.headphone is None:
+        state.fr = None
+        state.fr_key = None
+        return
+    if state.target not in targets:
+        state.target = _default_target(state.headphone.form, targets)
+    key = (state.headphone.path, state.target)
+    if state.fr_key == key and state.fr is not None:
+        return
+    state.fr = compute(state.headphone.path, state.target)
+    state.fr_key = key
+
+
+def _rail_button(icon, active: bool, on_press=None) -> ft.Control:
+    button = ft.Container(
+        width=42,
+        height=42,
+        border_radius=10,
+        bgcolor=theme.SURFACE_ACTIVE if active else "transparent",
+        alignment=ft.Alignment.CENTER,
+        content=ft.Icon(icon, size=18, color=theme.INK if active else theme.TEXT_TERTIARY),
+    )
+    if on_press is None:
+        return button
+    return Pressable(button, on_press=on_press, press_scale=theme.PRESS_SCALE_ICON)
+
+
+def tune_screen(page: ft.Page, state: AppState, devices, on_devices) -> ft.Control:
+    targets = list_targets()
+    _ensure_fr(state, targets)
+
+    def toast(text: str) -> None:
+        page.run_task(show_toast, page, text)
+
+    # -- shared derived data --------------------------------------------------
+
+    def get_curves():
+        fr = state.fr
+        if fr is None:
+            return None
+        measured = fr.smoothed if state.smoothed and len(fr.smoothed) else fr.raw
+        eq = eq_model.eq_curve(state.bands, fr.frequency) if state.eq_on else None
+        return {
+            "f": fr.frequency,
+            "measured": measured,
+            "target": fr.target if len(fr.target) else None,
+            "eq": eq,
+            "result": measured + eq if eq is not None else measured,
+        }
+
+    def get_preamp() -> float:
+        if state.fr is None or not state.eq_on:
+            return 0.0
+        return eq_model.preamp_db(state.bands, state.fr.frequency)
+
+    # -- cards ------------------------------------------------------------
+
+    def bands_changed():
+        graph.refresh()
+        export_bar.refresh()
+        if graph.page:
+            graph.update()
+            export_bar.update()
+
+    def do_auto_fit(e=None):
+        if state.fr is None:
+            toast("Pick headphones first")
+            return
+        state.bands = eq_model.auto_fit(state.fr, state.bands)
+        strip.refresh()
+        strip.update()
+        bands_changed()
+        toast("Auto-fit applied")
+
+    def do_reset(e=None):
+        state.reset_bands()
+        strip.refresh()
+        strip.update()
+        bands_changed()
+        toast("Bands reset")
+
+    def do_export(e=None):
+        if state.headphone is None:
+            toast("Pick headphones first")
+            return
+        path = export_file(state.eq_app, state.headphone.name, state.bands, get_preamp())
+        toast(f"Exported {state.eq_app}")
+
+    graph = GraphCard(state, get_curves, on_toggle_smoothed=lambda e: _toggle_smoothed())
+    strip = BandStripCard(state, bands_changed, do_auto_fit, do_reset)
+    export_bar = ExportBar(state, get_preamp, do_export)
+    dac_panel = DacPanel(state, devices, on_device_changed=lambda: None)
+
+    def _toggle_smoothed():
+        state.smoothed = not state.smoothed
+        graph.refresh()
+        graph.update()
+
+    # -- header ------------------------------------------------------------
+
+    eq_toggle_holder = ft.Container()
+
+    def refresh_eq_toggle():
+        eq_toggle_holder.content = ft.Row(
+            [
+                ft.Text("EQ", style=theme.mono(size=10.5)),
+                pill_toggle(state.eq_on, on_change=_set_eq_on),
+            ],
+            spacing=8,
+            tight=True,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+    def _set_eq_on(value: bool):
+        state.eq_on = value
+        refresh_eq_toggle()
+        eq_toggle_holder.update()
+        bands_changed()
+
+    target_menu_holder = ft.Container()
+    target_button_holder = ft.Container()
+
+    def refresh_target_control():
+        target_button_holder.content = Pressable(
+            ft.Container(
+                content=ft.Row(
+                    [
+                        ft.Text("TARGET", style=theme.mono(size=9.5)),
+                        ft.Text(
+                            state.target or "—",
+                            style=theme.sans(size=12.5),
+                            max_lines=1,
+                            overflow=ft.TextOverflow.ELLIPSIS,
+                        ),
+                        ft.Icon(
+                            ft.Icons.KEYBOARD_ARROW_UP if state.target_menu
+                            else ft.Icons.KEYBOARD_ARROW_DOWN,
+                            size=15,
+                            color=theme.TEXT_TERTIARY,
+                        ),
+                    ],
+                    spacing=8,
+                    tight=True,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+                border=ft.Border.all(1, theme.BORDER_DEFAULT),
+                border_radius=theme.RADIUS_BUTTON_SM,
+                padding=ft.Padding(left=12, right=8, top=7, bottom=7),
+                bgcolor=ft.Colors.WHITE,
+                shadow=theme.SHADOW_XS,
+            ),
+            on_press=lambda e: _toggle_target_menu(),
+        )
+        target_menu_holder.content = _build_target_menu() if state.target_menu else None
+
+    def _toggle_target_menu():
+        state.target_menu = not state.target_menu
+        refresh_target_control()
+        target_button_holder.update()
+        target_menu_holder.update()
+
+    def _build_target_menu() -> ft.Control:
+        rows = []
+        for name in targets:
+            selected = name == state.target
+            rows.append(
+                Pressable(
+                    ft.Container(
+                        content=ft.Row(
+                            [
+                                ft.Text(name, style=theme.sans(size=13), expand=True,
+                                        max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+                                ft.Icon(ft.Icons.CHECK, size=13, color=theme.INK)
+                                if selected else ft.Container(width=13),
+                            ],
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                        bgcolor=theme.SURFACE_ACTIVE if selected else "transparent",
+                        border_radius=8,
+                        padding=ft.Padding(left=10, right=10, top=7, bottom=7),
+                    ),
+                    on_press=_select_target(name),
+                )
+            )
+        return ft.Container(
+            content=ft.Column(rows, spacing=1, scroll=ft.ScrollMode.AUTO),
+            width=TARGET_MENU_WIDTH,
+            height=TARGET_MENU_HEIGHT,
+            bgcolor=theme.PAPER,
+            border=ft.Border.all(1, theme.BORDER_SUBTLE),
+            border_radius=theme.RADIUS_CARD,
+            shadow=theme.SHADOW_LG,
+            padding=6,
+            top=40,
+            right=0,
+        )
+
+    def _select_target(name: str):
+        def handler(e):
+            state.target = name
+            state.target_menu = False
+            _ensure_fr(state, targets)
+            refresh_target_control()
+            target_button_holder.update()
+            target_menu_holder.update()
+            bands_changed()
+        return handler
+
+    refresh_eq_toggle()
+    refresh_target_control()
+
+    headphone_name = state.headphone.name if state.headphone else "No headphone selected"
+    meta = state.headphone.meta if state.headphone else "Go back and pick a measurement"
+
+    header = ft.Row(
+        [
+            ft.Column(
+                [
+                    ft.Row(
+                        [
+                            ft.Text(headphone_name, style=theme.serif(size=27)),
+                            ft.Container(
+                                content=ft.Text(
+                                    "Reference",
+                                    style=theme.mono(size=10.5, color=theme.INK),
+                                ),
+                                bgcolor=theme.CORAL_BLOCK,
+                                border_radius=theme.RADIUS_PILL,
+                                padding=ft.Padding(left=10, right=10, top=3, bottom=3),
+                            ),
+                        ],
+                        spacing=10,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    ft.Text(meta.upper(), style=theme.mono(size=11.5)),
+                ],
+                spacing=4,
+                expand=True,
+            ),
+            ft.Stack([ft.Row([target_button_holder]), target_menu_holder]),
+            eq_toggle_holder,
+        ],
+        spacing=16,
+        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+    )
+
+    # -- rail + assembly ---------------------------------------------------
+
+    def open_save(e=None):
+        open_save_modal(
+            page, state, get_preamp,
+            on_saved=lambda path: toast(f"Saved {state.profile_name.strip()}"),
+        )
+
     rail = ft.Container(
         width=66,
         bgcolor=theme.SURFACE_SUNKEN,
+        border=ft.Border(right=ft.BorderSide(1, theme.BORDER_SUBTLE)),
         content=ft.Column(
             [
-                ft.Container(
-                    width=42,
-                    height=42,
-                    border_radius=10,
-                    bgcolor=theme.SURFACE_ACTIVE,
-                    alignment=ft.Alignment.CENTER,
-                    content=ft.Icon(ft.Icons.TUNE, size=18, color=theme.INK),
+                _rail_button(ft.Icons.TUNE, active=True),
+                _rail_button(ft.Icons.HEADPHONES_OUTLINED, active=False, on_press=on_devices),
+                _rail_button(ft.Icons.BOOKMARK_OUTLINE, active=False, on_press=open_save),
+                ft.Container(expand=True),
+                _rail_button(
+                    ft.Icons.HELP_OUTLINE, active=False,
+                    on_press=lambda e: toast("Help arrives with the assistant"),
                 ),
             ],
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=10,
+            expand=True,
         ),
         padding=ft.Padding(top=16, left=0, right=0, bottom=16),
     )
+
     main = ft.Container(
         content=ft.Column(
-            [
-                Pressable(
-                    ft.Row(
-                        [
-                            ft.Icon(ft.Icons.ARROW_BACK, size=14, color=theme.TEXT_TERTIARY),
-                            ft.Text("BACK TO WELCOME", style=theme.mono(size=11, letter_spacing=0.06)),
-                        ],
-                        spacing=6,
-                        tight=True,
-                    ),
-                    on_press=on_back_to_welcome,
-                ),
-                ft.Container(height=16),
-                ft.Text(
-                    state.headphone.name if state.headphone else "No headphone selected",
-                    style=theme.serif(size=27),
-                ),
-                ft.Container(height=8),
-                ft.Text(
-                    "Graph, 10-band strip, export bar, DAC panel land in phase GD2.",
-                    style=theme.sans(size=13.5, color=theme.TEXT_SECONDARY),
-                ),
-            ],
-            spacing=0,
+            [header, graph, strip, export_bar],
+            spacing=16,
+            scroll=ft.ScrollMode.AUTO,
+            expand=True,
         ),
-        padding=24,
+        padding=ft.Padding(left=24, right=24, top=22, bottom=22),
         expand=True,
     )
-    dac_panel = ft.Container(width=296, bgcolor=theme.SURFACE_SUNKEN)
+
     return ft.Container(
         content=ft.Row([rail, main, dac_panel], spacing=0, expand=True),
         expand=True,
