@@ -1,0 +1,16 @@
+[project]
+name = "comrade-curve"
+version = "0.1.0"
+description = "Comrade Curve — Auto EQ Studio desktop app"
+requires-python = ">=3.10"
+dependencies = [
+    "flet~=0.86.0",
+]
+
+[tool.flet]
+org = "dev.comradecurve"
+product = "Comrade Curve"
+company = "Comrade Curve"
+
+[tool.flet.app]
+path = "."
