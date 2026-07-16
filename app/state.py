@@ -81,7 +81,11 @@ class AppState:
     chat_open: bool = False
     save_open: bool = False
     out_menu: bool = False
-    target_menu: bool = False
+
+    # Target selection lives in its own rail-toggled sidebar rather than a
+    # dropdown: 61 targets need search + scroll.
+    target_panel_open: bool = True
+    target_query: str = ""
 
     messages: list[ChatMessage] = field(default_factory=list)
 

@@ -1,8 +1,9 @@
-"""Settings modal (BUILD_PLAN.md GD5.3): AI provider + keys + local endpoint.
+"""Settings modal (BUILD_PLAN.md GD5.3): AI provider + keys + endpoint.
 
-Provider: Auto / Anthropic API / Local (Ollama, LM Studio). The Anthropic
-key is stored in the OS keyring only; base URL + model go to
-~/.config/comrade-eq/config.json via settings_store.
+Provider: Auto / Anthropic API / OpenAI-compatible (OpenAI, DeepSeek,
+Gemini's OpenAI-compat API, Ollama, LM Studio). API keys are stored in the
+OS keyring only; base URL + model go to ~/.config/comrade-eq/config.json
+via settings_store.
 """
 
 import flet as ft
@@ -11,7 +12,7 @@ import settings_store
 import theme
 from ui.widgets import Pressable, chip, modal
 
-PROVIDERS = (("auto", "Auto"), ("anthropic", "Anthropic API"), ("openai", "Local model"))
+PROVIDERS = (("auto", "Auto"), ("anthropic", "Anthropic API"), ("openai", "OpenAI-compatible"))
 
 
 def open_settings_modal(page: ft.Page, toast) -> None:
@@ -39,6 +40,12 @@ def open_settings_modal(page: ft.Page, toast) -> None:
         else "sk-ant-…"
     )
     key_field = field("", key_hint, password=True)
+    openai_key_hint = (
+        "Key saved in keyring — enter to replace"
+        if settings_store.has_api_key("openai")
+        else "sk-… (OpenAI, DeepSeek, Gemini, or leave blank for local)"
+    )
+    openai_key_field = field("", openai_key_hint, password=True)
     base_url_field = field(config["base_url"], settings_store.DEFAULTS["base_url"])
     model_field = field(config["model"], settings_store.DEFAULTS["model"])
 
@@ -76,15 +83,25 @@ def open_settings_modal(page: ft.Page, toast) -> None:
                 "model": model_field.value.strip(),
             }
         )
+        stored, keyring_failed = False, False
         key = key_field.value.strip()
         if key:
             if settings_store.set_api_key("anthropic", key):
-                toast("Settings saved · key stored in keyring")
+                stored = True
             else:
-                toast("Settings saved · keyring unavailable, key NOT stored")
-            close()
-            return
-        toast("Settings saved")
+                keyring_failed = True
+        openai_key = openai_key_field.value.strip()
+        if openai_key:
+            if settings_store.set_api_key("openai", openai_key):
+                stored = True
+            else:
+                keyring_failed = True
+        if keyring_failed:
+            toast("Settings saved · keyring unavailable, key NOT stored")
+        elif stored:
+            toast("Settings saved · key stored in keyring")
+        else:
+            toast("Settings saved")
         close()
 
     def label(text: str) -> ft.Control:
@@ -96,7 +113,9 @@ def open_settings_modal(page: ft.Page, toast) -> None:
             ft.Text("Assistant settings", style=theme.serif(size=23)),
             ft.Text(
                 "Pick who translates your feedback into EQ. Auto uses the "
-                "Anthropic API when a key exists, otherwise a local model.",
+                "Anthropic API when a key exists, otherwise the OpenAI-compatible "
+                "endpoint below — point it at OpenAI, DeepSeek, Gemini's "
+                "OpenAI-compat API, or a local model (Ollama, LM Studio).",
                 style=theme.sans(size=13, weight=ft.FontWeight.W_400,
                                  color=theme.TEXT_SECONDARY, height=1.5),
             ),
@@ -105,9 +124,11 @@ def open_settings_modal(page: ft.Page, toast) -> None:
             provider_row_holder,
             label("ANTHROPIC API KEY (KEYRING)"),
             key_field,
-            label("LOCAL ENDPOINT (OPENAI-COMPATIBLE)"),
+            label("OPENAI-COMPATIBLE ENDPOINT (OPENAI / DEEPSEEK / GEMINI / OLLAMA / LM STUDIO)"),
             base_url_field,
-            label("LOCAL MODEL"),
+            label("OPENAI-COMPATIBLE API KEY (KEYRING)"),
+            openai_key_field,
+            label("MODEL"),
             model_field,
             ft.Container(height=4),
             ft.Row(

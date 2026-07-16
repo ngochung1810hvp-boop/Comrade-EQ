@@ -26,16 +26,12 @@ def main(page: ft.Page) -> None:
     page.theme = theme.theme()
     page.padding = 0
     if not page.web:
-        # ft.Window controls the native OS window and isn't meaningful in a
+        # page.window sizes the native OS window and isn't meaningful in a
         # browser tab (used for flet run -w screenshots during development).
-        page.overlay.append(
-            ft.Window(
-                width=1240,
-                height=824,
-                min_width=1100,
-                min_height=720,
-            )
-        )
+        page.window.width = 1240
+        page.window.height = 824
+        page.window.min_width = 1100
+        page.window.min_height = 720
 
     state = AppState()
     entries = build_index(MEASUREMENTS_DIR)

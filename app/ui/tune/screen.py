@@ -1,8 +1,8 @@
 """Screen 3 — Tune (BUILD_PLAN.md GD2).
 
 Layout per handoff: 66px icon rail | scrollable main column (header, graph
-card, 10-band card, export bar) | 296px DAC side panel. The chat drawer is
-GD4 scope and not mounted yet.
+card, 10-band card, export bar) | 296px side panel (DAC block on top,
+target list below, toggled from the rail).
 """
 
 import flet as ft
@@ -20,10 +20,8 @@ from ui.tune.profiles_modal import open_profiles_modal
 from ui.tune.export_bar import ExportBar
 from ui.tune.graph import GraphCard
 from ui.tune.save_modal import open_save_modal
+from ui.tune.target_panel import TargetPanel
 from ui.widgets import Pressable, pill_toggle, show_toast
-
-TARGET_MENU_WIDTH = 320
-TARGET_MENU_HEIGHT = 340
 
 
 def _default_target(form: str, targets: list[str]) -> str:
@@ -136,11 +134,57 @@ def tune_screen(page: ft.Page, state: AppState, devices, on_devices) -> ft.Contr
         path = export_file(state.eq_app, state.headphone.name, state.bands, get_preamp())
         toast(f"Exported {state.eq_app}")
 
+    # TARGET is picked from the target sidebar; the header only shows the
+    # current name (a plain label, not a dropdown trigger).
+    target_label_holder = ft.Container()
+
+    def refresh_target_label():
+        target_label_holder.content = ft.Container(
+            content=ft.Row(
+                [
+                    ft.Text("TARGET", style=theme.mono(size=9.5)),
+                    ft.Text(
+                        state.target or "—",
+                        style=theme.sans(size=12.5),
+                        max_lines=1,
+                        overflow=ft.TextOverflow.ELLIPSIS,
+                    ),
+                ],
+                spacing=8,
+                tight=True,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            border=ft.Border.all(1, theme.BORDER_DEFAULT),
+            border_radius=theme.RADIUS_BUTTON_SM,
+            padding=ft.Padding(left=12, right=12, top=7, bottom=7),
+            bgcolor=ft.Colors.WHITE,
+            shadow=theme.SHADOW_XS,
+        )
+
+    def _select_target(name: str):
+        state.target = name
+        _ensure_fr(state, targets)
+        refresh_target_label()
+        target_label_holder.update()
+        bands_changed()
+
+    refresh_target_label()
+
     graph = GraphCard(state, get_curves, on_toggle_smoothed=lambda e: _toggle_smoothed())
     strip = BandStripCard(state, bands_changed, do_auto_fit, do_reset)
     export_bar = ExportBar(state, get_preamp, do_export)
     dac_panel = DacPanel(
-        state, devices, on_device_changed=lambda: None, get_preamp=get_preamp
+        state, devices, on_device_changed=lambda: None, get_preamp=get_preamp,
+    )
+    target_panel = TargetPanel(state, targets, on_target_changed=_select_target)
+    target_panel.visible = state.target_panel_open
+
+    # Right side column: DAC block on top, target list filling the rest.
+    side_panel = ft.Container(
+        width=296,
+        bgcolor=theme.SURFACE_SUNKEN,
+        border=ft.Border(left=ft.BorderSide(1, theme.BORDER_SUBTLE)),
+        content=ft.Column([dac_panel, target_panel], spacing=0, expand=True),
     )
 
     def _toggle_smoothed():
@@ -202,98 +246,8 @@ def tune_screen(page: ft.Page, state: AppState, devices, on_devices) -> ft.Contr
         taste_toggle_holder.update()
         bands_changed()
 
-    target_menu_holder = ft.Container()
-    target_button_holder = ft.Container()
-
-    def refresh_target_control():
-        target_button_holder.content = Pressable(
-            ft.Container(
-                content=ft.Row(
-                    [
-                        ft.Text("TARGET", style=theme.mono(size=9.5)),
-                        ft.Text(
-                            state.target or "—",
-                            style=theme.sans(size=12.5),
-                            max_lines=1,
-                            overflow=ft.TextOverflow.ELLIPSIS,
-                        ),
-                        ft.Icon(
-                            ft.Icons.KEYBOARD_ARROW_UP if state.target_menu
-                            else ft.Icons.KEYBOARD_ARROW_DOWN,
-                            size=15,
-                            color=theme.TEXT_TERTIARY,
-                        ),
-                    ],
-                    spacing=8,
-                    tight=True,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                ),
-                border=ft.Border.all(1, theme.BORDER_DEFAULT),
-                border_radius=theme.RADIUS_BUTTON_SM,
-                padding=ft.Padding(left=12, right=8, top=7, bottom=7),
-                bgcolor=ft.Colors.WHITE,
-                shadow=theme.SHADOW_XS,
-            ),
-            on_press=lambda e: _toggle_target_menu(),
-        )
-        target_menu_holder.content = _build_target_menu() if state.target_menu else None
-
-    def _toggle_target_menu():
-        state.target_menu = not state.target_menu
-        refresh_target_control()
-        target_button_holder.update()
-        target_menu_holder.update()
-
-    def _build_target_menu() -> ft.Control:
-        rows = []
-        for name in targets:
-            selected = name == state.target
-            rows.append(
-                Pressable(
-                    ft.Container(
-                        content=ft.Row(
-                            [
-                                ft.Text(name, style=theme.sans(size=13), expand=True,
-                                        max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
-                                ft.Icon(ft.Icons.CHECK, size=13, color=theme.INK)
-                                if selected else ft.Container(width=13),
-                            ],
-                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                        ),
-                        bgcolor=theme.SURFACE_ACTIVE if selected else "transparent",
-                        border_radius=8,
-                        padding=ft.Padding(left=10, right=10, top=7, bottom=7),
-                    ),
-                    on_press=_select_target(name),
-                )
-            )
-        return ft.Container(
-            content=ft.Column(rows, spacing=1, scroll=ft.ScrollMode.AUTO),
-            width=TARGET_MENU_WIDTH,
-            height=TARGET_MENU_HEIGHT,
-            bgcolor=theme.PAPER,
-            border=ft.Border.all(1, theme.BORDER_SUBTLE),
-            border_radius=theme.RADIUS_CARD,
-            shadow=theme.SHADOW_LG,
-            padding=6,
-            top=40,
-            right=0,
-        )
-
-    def _select_target(name: str):
-        def handler(e):
-            state.target = name
-            state.target_menu = False
-            _ensure_fr(state, targets)
-            refresh_target_control()
-            target_button_holder.update()
-            target_menu_holder.update()
-            bands_changed()
-        return handler
-
     refresh_eq_toggle()
     refresh_taste_toggle()
-    refresh_target_control()
 
     headphone_name = state.headphone.name if state.headphone else "No headphone selected"
     meta = state.headphone.meta if state.headphone else "Go back and pick a measurement"
@@ -323,7 +277,7 @@ def tune_screen(page: ft.Page, state: AppState, devices, on_devices) -> ft.Contr
                 spacing=4,
                 expand=True,
             ),
-            ft.Stack([ft.Row([target_button_holder]), target_menu_holder]),
+            target_label_holder,
             taste_toggle_holder,
             eq_toggle_holder,
         ],
@@ -342,8 +296,11 @@ def tune_screen(page: ft.Page, state: AppState, devices, on_devices) -> ft.Contr
     def _profile_loaded(profile):
         """A loaded profile restores bands/target and becomes the taste."""
         _ensure_fr(state, targets)
-        refresh_target_control()
-        target_button_holder.update()
+        refresh_target_label()
+        target_label_holder.update()
+        target_panel.refresh()
+        if target_panel.page:
+            target_panel.update()
         refresh_taste_toggle()
         taste_toggle_holder.update()
         strip.refresh()
@@ -355,13 +312,28 @@ def tune_screen(page: ft.Page, state: AppState, devices, on_devices) -> ft.Contr
         open_profiles_modal(page, state, on_loaded=_profile_loaded,
                             open_save=open_save)
 
+    def _toggle_target_panel(e=None):
+        state.target_panel_open = not state.target_panel_open
+        target_panel.visible = state.target_panel_open
+        side_panel.update()
+        refresh_rail()
+        rail.update()
+
     rail = ft.Container(
         width=66,
         bgcolor=theme.SURFACE_SUNKEN,
         border=ft.Border(right=ft.BorderSide(1, theme.BORDER_SUBTLE)),
-        content=ft.Column(
+        padding=ft.Padding(top=16, left=0, right=0, bottom=16),
+    )
+
+    def refresh_rail():
+        rail.content = ft.Column(
             [
                 _rail_button(ft.Icons.TUNE, active=True),
+                _rail_button(
+                    ft.Icons.TRACK_CHANGES, active=state.target_panel_open,
+                    on_press=_toggle_target_panel,
+                ),
                 _rail_button(ft.Icons.HEADPHONES_OUTLINED, active=False, on_press=on_devices),
                 _rail_button(ft.Icons.BOOKMARK_OUTLINE, active=False, on_press=open_profiles),
                 ft.Container(expand=True),
@@ -377,9 +349,9 @@ def tune_screen(page: ft.Page, state: AppState, devices, on_devices) -> ft.Contr
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             spacing=10,
             expand=True,
-        ),
-        padding=ft.Padding(top=16, left=0, right=0, bottom=16),
-    )
+        )
+
+    refresh_rail()
 
     main = ft.Container(
         content=ft.Column(
@@ -410,7 +382,11 @@ def tune_screen(page: ft.Page, state: AppState, devices, on_devices) -> ft.Contr
     return ft.Container(
         content=ft.Stack(
             [
-                ft.Row([rail, main, dac_panel], spacing=0, expand=True),
+                ft.Row(
+                    [rail, main, side_panel],
+                    spacing=0,
+                    expand=True,
+                ),
                 chat_layer,
             ],
             expand=True,

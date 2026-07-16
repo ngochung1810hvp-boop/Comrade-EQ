@@ -1,7 +1,7 @@
 """Graph card — 4-curve frequency-response chart (BUILD_PLAN.md GD2.2).
 
 Recreates the handoff's "Graph card": white card, green accent tab, legend
-row + SMOOTHED chip, then a log-x chart 20 Hz-20 kHz / +-12 dB drawing
+row + SMOOTHED chip, then a log-x chart 20 Hz-20 kHz / -30..+20 dB drawing
 measured (coral), target (dashed gray), EQ (green) and result (ink) paths
 on a flet canvas (LineChart lacks log axes + dashed strokes).
 """
@@ -15,10 +15,10 @@ import theme
 from ui.widgets import chip
 
 F_MIN, F_MAX = 20.0, 20000.0
-DB_RANGE = 12.0
+DB_MIN, DB_MAX = -30.0, 20.0
 
 X_GRID = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000]
-Y_GRID = [12, 6, 0, -6, -12]
+Y_GRID = [20, 10, 0, -10, -20, -30]
 
 PAD_LEFT, PAD_RIGHT, PAD_TOP, PAD_BOTTOM = 8, 8, 6, 18
 CHART_HEIGHT = 300
@@ -137,8 +137,8 @@ class GraphCard(ft.Container):
 
     def _y(self, db: float) -> float:
         _, y0, _, h = self._plot_rect()
-        clipped = max(min(db, DB_RANGE), -DB_RANGE)
-        return y0 + (1 - (clipped + DB_RANGE) / (2 * DB_RANGE)) * h
+        clipped = max(min(db, DB_MAX), DB_MIN)
+        return y0 + (1 - (clipped - DB_MIN) / (DB_MAX - DB_MIN)) * h
 
     def _curve_path(self, f, values, color: str, width: float, dash=None) -> cv.Path:
         elements = []

@@ -1,9 +1,12 @@
-"""DAC side panel, 296px sunken column (BUILD_PLAN.md GD2.5).
+"""DAC block — top section of the right side panel (BUILD_PLAN.md GD2.5).
 
 Handoff spec: "OUTPUT · DAC" label, a device-picker button (36x36 icon chip
 + name/type) opening a dropdown of devices (rate + selection dot), and a
 3-up stat row: SAMPLE rate, bit DEPTH, EXCLUSIVE status. Depth/exclusive
 render "—" (read-only best-effort per BUILD_PLAN section 2.5).
+
+TARGET selection sits below this block in the same side panel
+(ui/tune/target_panel.py); the parent side column owns width/border.
 """
 
 import random
@@ -45,13 +48,15 @@ def _stat_cell(label: str, value: str, *, chip_style: bool = False) -> ft.Contro
 
 
 class DacPanel(ft.Container):
-    def __init__(self, state: AppState, devices, on_device_changed, get_preamp=None):
+    def __init__(
+        self, state: AppState, devices, on_device_changed, get_preamp=None,
+    ):
         self._state = state
         self._devices = devices
         self._on_device_changed = on_device_changed
         self._get_preamp = get_preamp or (lambda: 0.0)
         self._picker_holder = ft.Container()
-        self._menu_holder = ft.Container()
+        self._menu_holder = ft.Container(top=58, left=0, right=0)
         self._stats_holder = ft.Container()
         self._preview_holder = ft.Container()
         self._player = ab_preview.ABPlayer()
@@ -60,9 +65,6 @@ class DacPanel(ft.Container):
         self._blind: dict | None = None
 
         super().__init__(
-            width=296,
-            bgcolor=theme.SURFACE_SUNKEN,
-            border=ft.Border(left=ft.BorderSide(1, theme.BORDER_SUBTLE)),
             padding=ft.Padding(left=18, right=18, top=22, bottom=22),
             content=ft.Column(
                 [
@@ -70,7 +72,10 @@ class DacPanel(ft.Container):
                         "OUTPUT · DAC",
                         style=theme.mono(size=11, color=theme.TEXT_SECONDARY, letter_spacing=0.08),
                     ),
-                    ft.Stack([ft.Column([self._picker_holder]), self._menu_holder]),
+                    ft.Stack(
+                        [ft.Column([self._picker_holder]), self._menu_holder],
+                        clip_behavior=ft.ClipBehavior.NONE,
+                    ),
                     self._stats_holder,
                     self._preview_holder,
                 ],
@@ -372,9 +377,6 @@ class DacPanel(ft.Container):
             border_radius=theme.RADIUS_CARD,
             shadow=theme.SHADOW_LG,
             padding=6,
-            top=58,
-            left=0,
-            right=0,
         )
 
     def _toggle_menu(self, e=None) -> None:

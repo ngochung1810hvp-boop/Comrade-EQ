@@ -55,7 +55,7 @@ def open_save_modal(page: ft.Page, state: AppState, get_preamp, on_saved) -> Non
 
     def submit(e=None):
         if not state.profile_name.strip():
-            name_field.error_text = "Name the profile first"
+            name_field.error = "Name the profile first"
             name_field.update()
             return
         path = save_profile(state, get_preamp())
@@ -64,12 +64,13 @@ def open_save_modal(page: ft.Page, state: AppState, get_preamp, on_saved) -> Non
 
     def on_name_change(e):
         state.profile_name = e.control.value
-        if name_field.error_text:
-            name_field.error_text = None
+        if name_field.error:
+            name_field.error = None
             name_field.update()
 
     name_field = ft.TextField(
         value=state.profile_name,
+        error=None,
         hint_text="e.g. Evening jazz",
         border_color=theme.BORDER_DEFAULT,
         focused_border_color=theme.INK,

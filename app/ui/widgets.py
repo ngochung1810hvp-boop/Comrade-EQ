@@ -141,7 +141,7 @@ def dropdown_menu(
         visible=open,
         animate_opacity=ft.Animation(theme.DURATION_DROPDOWN, theme.EASE_OUT),
     )
-    return ft.Stack(controls=[trigger, panel])
+    return ft.Stack(controls=[trigger, panel], clip_behavior=ft.ClipBehavior.NONE)
 
 
 def toast(text: str) -> ft.Container:

@@ -55,9 +55,16 @@ class Options:
     )
 
 
+# Reference sheets that live in targets/ but hold many curves per file
+# (no single SPL column), so FrequencyResponse.read_csv can't load them.
+NON_TARGET_FILES = {"All Harman Targets.csv"}
+
+
 def list_targets(targets_dir: str = TARGETS_DIR) -> list[str]:
     return sorted(
-        f[:-4] for f in os.listdir(targets_dir) if f.endswith(".csv")
+        f[:-4]
+        for f in os.listdir(targets_dir)
+        if f.endswith(".csv") and f not in NON_TARGET_FILES
     )
 
 
