@@ -123,3 +123,6 @@ webapp/data/*
 !webapp/data/targets.json
 !webapp/data/targets.json
 dbtools/google-image-search/
+
+# User preference profiles (Layer 3 memory)
+profiles/

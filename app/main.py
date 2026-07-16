@@ -10,6 +10,7 @@ import flet as ft
 import theme
 from audio_devices import list_output_devices
 from headphone_index import build_index
+from profile_store import ProfileStore
 from state import AppState
 from ui.device_setup import device_setup_screen
 from ui.tune.screen import tune_screen
@@ -41,6 +42,10 @@ def main(page: ft.Page) -> None:
     devices = list_output_devices()
     # Preselect the OS default output so only the headphone pick is required.
     state.device = next((d for d in devices if d.is_default), None)
+    # GD3: resume the most recently saved profile as the active taste memory.
+    state.profile = ProfileStore().load_latest()
+    if state.profile is not None:
+        state.profile_name = state.profile.name
 
     def render() -> None:
         page.controls.clear()

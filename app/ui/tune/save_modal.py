@@ -1,48 +1,45 @@
-"""Save-profile modal (BUILD_PLAN.md GD2.6).
+"""Save-profile modal (BUILD_PLAN.md GD2.6, upgraded in GD3.3).
 
 Handoff spec: centered 400px card, scale-in — serif "Save sound profile"
 title, description naming the current headphone, profile-name input, 2-up
 Target/Preamp summary, Cancel / Save buttons.
 
-GD2 writes only the minimal schema (name + bands + target + preamp);
-the full profile schema (preference_curve, filter_deltas, history) is GD3.
+GD3: writes the full profile schema via ProfileStore (preference_curve,
+filter_deltas, history) instead of the minimal GD2 payload. Re-saving an
+existing name keeps its accumulated taste memory and only refreshes the
+tune snapshot.
 """
-
-import json
-import os
-import re
 
 import flet as ft
 
 import theme
+from profile_store import Profile, ProfileStore
 from state import AppState
 from ui.widgets import Pressable, modal
 
-PROFILES_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
-    "profiles",
-)
-
 
 def save_profile(state: AppState, preamp: float) -> str:
-    """Writes profiles/<name>.json atomically; returns the path."""
-    os.makedirs(PROFILES_DIR, exist_ok=True)
-    safe = re.sub(r'[<>:"/\\|?*]', "_", state.profile_name.strip())
-    path = os.path.join(PROFILES_DIR, f"{safe}.json")
-    payload = {
-        "name": state.profile_name.strip(),
-        "headphone": state.headphone.name if state.headphone else None,
-        "target": state.target,
-        "preamp": round(preamp, 2),
-        "bands": [
-            {"fc": b.fc, "type": b.type, "gain": b.gain, "q": b.q}
-            for b in state.bands
-        ],
-    }
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(payload, fh, indent=2)
-    os.replace(tmp, path)
+    """Writes the full profiles/<name>.json via ProfileStore; returns the
+    path and sets the saved profile as the active one (state.profile)."""
+    store = ProfileStore()
+    name = state.profile_name.strip()
+    if store.exists(name):
+        profile = store.load(name)
+        profile.name = name
+    else:
+        profile = Profile(name=name)
+    profile.headphone = state.headphone.name if state.headphone else None
+    profile.target = state.target
+    profile.preamp = round(preamp, 2)
+    profile.bands = [
+        {"fc": b.fc, "type": b.type, "gain": b.gain, "q": b.q}
+        for b in state.bands
+    ]
+    profile.record_history(
+        action="save", headphone=profile.headphone, target=profile.target
+    )
+    path = store.save(profile)
+    state.profile = profile
     return path
 
 

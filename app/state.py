@@ -70,6 +70,11 @@ class AppState:
     smoothed: bool = False
     preamp_auto: bool = True
 
+    # GD3 — Layer 3 memory: the active Profile (profile_store.Profile) and
+    # whether its preference curve is applied as sound_signature.
+    profile: object | None = None
+    taste_on: bool = False
+
     chat_open: bool = False
     save_open: bool = False
     out_menu: bool = False

@@ -9,7 +9,7 @@ import flet as ft
 
 import eq_model
 import theme
-from equalize import compute, list_targets
+from equalize import Options, compute, list_targets
 from exporters import export_file
 from state import AppState
 from ui.tune.band_strip import BandStripCard
@@ -31,17 +31,30 @@ def _default_target(form: str, targets: list[str]) -> str:
 
 
 def _ensure_fr(state: AppState, targets: list[str]) -> None:
-    """Computes/caches the processed FrequencyResponse for headphone+target."""
+    """Computes/caches the processed FrequencyResponse for headphone+target.
+
+    GD3: when the taste toggle is on, the active profile's preference curve
+    rides along as sound_signature (AI_ROADMAP Layer 3 wiring).
+    """
     if state.headphone is None:
         state.fr = None
         state.fr_key = None
         return
     if state.target not in targets:
         state.target = _default_target(state.headphone.form, targets)
-    key = (state.headphone.path, state.target)
+    signature = None
+    if state.taste_on and state.profile is not None:
+        signature = state.profile.as_sound_signature(state.headphone.name)
+    key = (
+        state.headphone.path,
+        state.target,
+        state.profile.updated_at if signature is not None else None,
+    )
     if state.fr_key == key and state.fr is not None:
         return
-    state.fr = compute(state.headphone.path, state.target)
+    state.fr = compute(
+        state.headphone.path, state.target, Options(sound_signature=signature)
+    )
     state.fr_key = key
 
 
@@ -151,6 +164,39 @@ def tune_screen(page: ft.Page, state: AppState, devices, on_devices) -> ft.Contr
         eq_toggle_holder.update()
         bands_changed()
 
+    # GD3 — "Ap dung gu nghe": apply the saved profile's preference curve.
+    taste_toggle_holder = ft.Container()
+
+    def refresh_taste_toggle():
+        taste_toggle_holder.content = ft.Row(
+            [
+                ft.Text("TASTE", style=theme.mono(size=10.5)),
+                pill_toggle(state.taste_on, on_change=_set_taste_on),
+            ],
+            spacing=8,
+            tight=True,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+    def _set_taste_on(value: bool):
+        if value and state.profile is None:
+            toast("Save a profile first")
+            refresh_taste_toggle()
+            taste_toggle_holder.update()
+            return
+        state.taste_on = value
+        if value and (
+            state.profile.as_sound_signature(
+                state.headphone.name if state.headphone else None
+            )
+            is None
+        ):
+            toast("Profile has no taste data yet")
+        _ensure_fr(state, targets)
+        refresh_taste_toggle()
+        taste_toggle_holder.update()
+        bands_changed()
+
     target_menu_holder = ft.Container()
     target_button_holder = ft.Container()
 
@@ -241,6 +287,7 @@ def tune_screen(page: ft.Page, state: AppState, devices, on_devices) -> ft.Contr
         return handler
 
     refresh_eq_toggle()
+    refresh_taste_toggle()
     refresh_target_control()
 
     headphone_name = state.headphone.name if state.headphone else "No headphone selected"
@@ -272,6 +319,7 @@ def tune_screen(page: ft.Page, state: AppState, devices, on_devices) -> ft.Contr
                 expand=True,
             ),
             ft.Stack([ft.Row([target_button_holder]), target_menu_holder]),
+            taste_toggle_holder,
             eq_toggle_holder,
         ],
         spacing=16,
