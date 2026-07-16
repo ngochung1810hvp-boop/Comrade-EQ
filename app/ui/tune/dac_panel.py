@@ -6,11 +6,14 @@ Handoff spec: "OUTPUT · DAC" label, a device-picker button (36x36 icon chip
 render "—" (read-only best-effort per BUILD_PLAN section 2.5).
 """
 
+import threading
+
 import flet as ft
 
+import ab_preview
 import theme
 from state import AppState
-from ui.widgets import Pressable
+from ui.widgets import Pressable, pill_toggle
 
 
 def _stat_cell(label: str, value: str, *, chip_style: bool = False) -> ft.Control:
@@ -40,13 +43,17 @@ def _stat_cell(label: str, value: str, *, chip_style: bool = False) -> ft.Contro
 
 
 class DacPanel(ft.Container):
-    def __init__(self, state: AppState, devices, on_device_changed):
+    def __init__(self, state: AppState, devices, on_device_changed, get_preamp=None):
         self._state = state
         self._devices = devices
         self._on_device_changed = on_device_changed
+        self._get_preamp = get_preamp or (lambda: 0.0)
         self._picker_holder = ft.Container()
         self._menu_holder = ft.Container()
         self._stats_holder = ft.Container()
+        self._preview_holder = ft.Container()
+        self._player = ab_preview.ABPlayer()
+        self._preparing = False
 
         super().__init__(
             width=296,
@@ -61,6 +68,7 @@ class DacPanel(ft.Container):
                     ),
                     ft.Stack([ft.Column([self._picker_holder]), self._menu_holder]),
                     self._stats_holder,
+                    self._preview_holder,
                 ],
                 spacing=14,
             ),
@@ -121,6 +129,98 @@ class DacPanel(ft.Container):
             ],
             spacing=8,
         )
+        self._preview_holder.content = self._build_preview()
+
+    def _build_preview(self) -> ft.Control:
+        """GD4.5 A/B listen: pink noise convolved with the current EQ FIR."""
+        playing = self._player.playing
+        if self._preparing:
+            play_label, play_icon = "Preparing…", ft.Icons.HOURGLASS_EMPTY
+        elif playing:
+            play_label, play_icon = "Stop", ft.Icons.STOP
+        else:
+            play_label, play_icon = "Play", ft.Icons.PLAY_ARROW
+        play_button = Pressable(
+            ft.Container(
+                content=ft.Row(
+                    [
+                        ft.Icon(play_icon, size=14,
+                                color=theme.PAPER if playing else theme.INK),
+                        ft.Text(play_label, style=theme.sans(
+                            size=12.5,
+                            color=theme.PAPER if playing else theme.INK)),
+                    ],
+                    spacing=6,
+                    tight=True,
+                ),
+                bgcolor=theme.INK if playing else ft.Colors.WHITE,
+                border=None if playing else ft.Border.all(1, theme.BORDER_DEFAULT),
+                border_radius=theme.RADIUS_BUTTON_SM,
+                padding=ft.Padding(left=12, right=14, top=7, bottom=7),
+                shadow=theme.SHADOW_XS,
+            ),
+            on_press=self._toggle_play,
+        )
+        ab_row = ft.Row(
+            [
+                ft.Text("A", style=theme.mono(size=10.5)),
+                pill_toggle(self._player.eq_on, on_change=self._set_ab),
+                ft.Text("B·EQ", style=theme.mono(size=10.5)),
+            ],
+            spacing=6,
+            tight=True,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+        return ft.Container(
+            content=ft.Column(
+                [
+                    ft.Text("PREVIEW · A/B", style=theme.mono(size=9.5)),
+                    ft.Row(
+                        [play_button, ft.Container(expand=True), ab_row],
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                ],
+                spacing=8,
+                tight=True,
+            ),
+            bgcolor=ft.Colors.WHITE,
+            border_radius=10,
+            padding=ft.Padding(left=12, right=12, top=10, bottom=10),
+            shadow=theme.SHADOW_XS,
+        )
+
+    def _toggle_play(self, e=None) -> None:
+        if self._preparing:
+            return
+        if self._player.playing:
+            self._player.stop()
+            self.refresh()
+            self.update()
+            return
+        self._preparing = True
+        self.refresh()
+        self.update()
+
+        def worker():
+            try:
+                self._player.prepare(self._state.bands, self._get_preamp())
+                self._player.set_eq(True)
+                self._player.start()
+            except Exception:
+                pass  # no audio device / portaudio missing: stay stopped
+            self._preparing = False
+            self.refresh()
+            try:
+                self.update()
+            except Exception:
+                pass  # page may have navigated away meanwhile
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _set_ab(self, value: bool) -> None:
+        self._player.set_eq(value)
+        self.refresh()
+        self.update()
 
     def _build_menu(self) -> ft.Control:
         rows = []

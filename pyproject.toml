@@ -34,6 +34,7 @@ app = [
     'flet~=0.86.0',
     'sounddevice~=0.5.5',
     'keyring~=25.7.0',
+    'anthropic>=0.116.0',
 ]
 
 [project.urls]

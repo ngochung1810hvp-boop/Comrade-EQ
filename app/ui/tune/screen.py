@@ -13,6 +13,7 @@ from equalize import Options, compute, list_targets
 from exporters import export_file
 from state import AppState
 from ui.tune.band_strip import BandStripCard
+from ui.tune.chat_drawer import chat_overlay
 from ui.tune.dac_panel import DacPanel
 from ui.tune.export_bar import ExportBar
 from ui.tune.graph import GraphCard
@@ -136,7 +137,9 @@ def tune_screen(page: ft.Page, state: AppState, devices, on_devices) -> ft.Contr
     graph = GraphCard(state, get_curves, on_toggle_smoothed=lambda e: _toggle_smoothed())
     strip = BandStripCard(state, bands_changed, do_auto_fit, do_reset)
     export_bar = ExportBar(state, get_preamp, do_export)
-    dac_panel = DacPanel(state, devices, on_device_changed=lambda: None)
+    dac_panel = DacPanel(
+        state, devices, on_device_changed=lambda: None, get_preamp=get_preamp
+    )
 
     def _toggle_smoothed():
         state.smoothed = not state.smoothed
@@ -367,8 +370,29 @@ def tune_screen(page: ft.Page, state: AppState, devices, on_devices) -> ft.Contr
         expand=True,
     )
 
+    # GD4: chat assistant FAB + drawer overlay the whole screen.
+    def _chat_bands_changed():
+        strip.refresh()
+        if strip.page:
+            strip.update()
+        bands_changed()
+
+    chat_layer = chat_overlay(
+        page,
+        state,
+        get_headphone=lambda: state.headphone.name if state.headphone else None,
+        on_bands_changed=_chat_bands_changed,
+        toast=toast,
+    )
+
     return ft.Container(
-        content=ft.Row([rail, main, dac_panel], spacing=0, expand=True),
+        content=ft.Stack(
+            [
+                ft.Row([rail, main, dac_panel], spacing=0, expand=True),
+                chat_layer,
+            ],
+            expand=True,
+        ),
         expand=True,
         bgcolor=theme.PAPER,
     )

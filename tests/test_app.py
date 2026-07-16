@@ -221,6 +221,110 @@ class TestProfileStore:
         latest = store.load_latest()
         assert latest is not None and latest.name == "newer"
 
+    def test_ai_engine_group_a_mapping_is_deterministic(self):
+        from ai_engine import vocabulary
+
+        mapped = vocabulary.map_adjustment("mud", "reduce", 0.6)
+        (f,) = mapped.filters
+        assert (f.type, f.fc, f.q) == ("PEAKING", 300, 1.2)
+        assert f.gain == -2.4  # 0.6 * base 4 dB, cut
+        boosted = vocabulary.map_adjustment("thin_cool", "reduce", 1.0).filters[0]
+        assert boosted.gain > 0  # deficiency tag: reducing it boosts lows
+
+    def test_ai_engine_clamps(self):
+        from ai_engine import vocabulary
+        from profile_store import FilterDelta
+
+        f = vocabulary.map_adjustment("harsh", "reduce", 1.0).filters[0]
+        assert abs(f.gain) <= vocabulary.GAIN_LIMIT_DB
+        overlapping = [
+            FilterDelta(tag="boomy", type="PEAKING", fc=125, q=1.4, gain=-5.0),
+            FilterDelta(tag="bloated", type="PEAKING", fc=250, q=1.4, gain=-6.0),
+        ]
+        vocabulary.clamp_overlap(overlapping)
+        assert sum(abs(f.gain) for f in overlapping) <= vocabulary.OVERLAP_LIMIT_DB + 0.01
+
+    def test_ai_engine_group_c_explains_without_filters(self):
+        from ai_engine import vocabulary
+
+        mapped = vocabulary.map_adjustment("spatial", "increase", 0.8)
+        assert mapped.explanation and not mapped.filters
+
+    def test_engine_propose_and_apply_with_fake_provider(self):
+        from ai_engine import engine
+        from ai_engine.providers.base import Adjustment, InterpretResult, Provider
+        from state import default_bands
+
+        class FakeProvider(Provider):
+            name = "fake"
+
+            def interpret(self, feedback, context=None):
+                return InterpretResult(
+                    adjustments=[Adjustment("punch", "increase", 0.6, "more bass")],
+                    reply="Adding punch.",
+                )
+
+        bands = default_bands()
+        proposal = engine.propose("more bass", provider=FakeProvider())
+        assert proposal.changes_eq and not proposal.error
+        snapshot, detail = engine.apply_proposal(bands, proposal)
+        # punch region 60-150 Hz covers bands 1 (51 Hz is outside) and 2
+        changed = [i for i, (b, s) in enumerate(zip(bands, snapshot)) if b.gain != s]
+        assert changed, "no band moved"
+        assert all(60 <= bands[i].fc <= 150 for i in changed)
+        assert "punch" in detail
+        engine.restore_snapshot(bands, snapshot)
+        assert [b.gain for b in bands] == snapshot
+
+    def test_engine_clarify_and_error_paths(self):
+        from ai_engine import engine
+        from ai_engine.providers.base import InterpretResult, Provider, ProviderError
+
+        class ClarifyProvider(Provider):
+            name = "fake"
+
+            def interpret(self, feedback, context=None):
+                return InterpretResult(clarify=True, question="Tonal or transient?")
+
+        class BrokenProvider(Provider):
+            name = "fake"
+
+            def interpret(self, feedback, context=None):
+                raise ProviderError("no model configured")
+
+        p = engine.propose("muddy", provider=ClarifyProvider())
+        assert p.clarify and not p.changes_eq and "Tonal" in p.reply
+        p = engine.propose("muddy", provider=BrokenProvider())
+        assert p.error and "no model" in p.reply
+
+    def test_parse_result_drops_hallucinated_tags(self):
+        from ai_engine.providers.base import parse_result
+
+        result = parse_result(
+            '{"adjustments": [{"tag": "bass_cannon", "direction": "reduce", '
+            '"intensity": 5, "quote": ""}, {"tag": "air", "direction": "increase", '
+            '"intensity": 5, "quote": ""}], "clarify": false, "question": null, '
+            '"reply": "ok"}'
+        )
+        assert [a.tag for a in result.adjustments] == ["air"]
+        assert result.adjustments[0].intensity == 1.0  # clamped
+
+    def test_ab_preview_fir_and_convolution(self):
+        import ab_preview
+        from state import default_bands
+
+        bands = default_bands()
+        bands[1].gain = 4.0
+        fir = ab_preview.build_fir(bands, preamp_db=-4.4, fs=48000)
+        assert fir.ndim == 1 and len(fir) > 100
+        assert np.all(np.isfinite(fir))
+        noise = ab_preview.pink_noise(seconds=0.25, fs=48000)
+        assert np.max(np.abs(noise)) <= 0.3
+        player = ab_preview.ABPlayer(fs=48000)
+        player.prepare(bands, preamp_db=-4.4, signal=noise)
+        assert player._eq is not None and len(player._eq) == len(noise)
+        assert np.max(np.abs(player._eq)) <= 1.0
+
     def test_taste_tilts_two_headphones_the_same_way(self):
         """GD3.4 acceptance: one profile applied to two different headphones
         tilts both results toward the preference."""
