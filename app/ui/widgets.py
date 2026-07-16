@@ -216,12 +216,19 @@ def modal(content: ft.Control, on_dismiss=None) -> ft.Control:
     scrim = ft.Container(
         bgcolor=ft.Colors.with_opacity(0.5, theme.INK),
         expand=True,
-        on_click=(lambda e: on_dismiss(e)) if on_dismiss else None,
     )
+    # The centered wrapper sits above the scrim and would swallow its
+    # clicks, so outside-dismiss lives on the wrapper; a no-op tap handler
+    # on the card keeps clicks inside it from bubbling to the wrapper.
     return ft.Stack(
         controls=[
             scrim,
-            ft.Container(content=card, alignment=ft.Alignment.CENTER, expand=True),
+            ft.Container(
+                content=ft.GestureDetector(content=card, on_tap=lambda e: None),
+                alignment=ft.Alignment.CENTER,
+                expand=True,
+                on_click=(lambda e: on_dismiss(e)) if on_dismiss else None,
+            ),
         ],
         expand=True,
     )

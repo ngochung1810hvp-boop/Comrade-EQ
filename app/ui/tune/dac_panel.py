@@ -6,12 +6,14 @@ Handoff spec: "OUTPUT · DAC" label, a device-picker button (36x36 icon chip
 render "—" (read-only best-effort per BUILD_PLAN section 2.5).
 """
 
+import random
 import threading
 
 import flet as ft
 
 import ab_preview
 import theme
+from profile_store import ProfileStore
 from state import AppState
 from ui.widgets import Pressable, pill_toggle
 
@@ -54,6 +56,8 @@ class DacPanel(ft.Container):
         self._preview_holder = ft.Container()
         self._player = ab_preview.ABPlayer()
         self._preparing = False
+        # GD5 blind test: {"eq_is_x": bool, "current": "X"|"Y", "result": str|None}
+        self._blind: dict | None = None
 
         super().__init__(
             width=296,
@@ -161,28 +165,84 @@ class DacPanel(ft.Container):
             ),
             on_press=self._toggle_play,
         )
-        ab_row = ft.Row(
-            [
-                ft.Text("A", style=theme.mono(size=10.5)),
-                pill_toggle(self._player.eq_on, on_change=self._set_ab),
-                ft.Text("B·EQ", style=theme.mono(size=10.5)),
-            ],
-            spacing=6,
-            tight=True,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-        )
-        return ft.Container(
-            content=ft.Column(
+        if self._blind is not None:
+            current = self._blind["current"]
+            ab_row = ft.Row(
+                [
+                    ft.Text("X", style=theme.mono(
+                        size=10.5, color=theme.INK if current == "X"
+                        else theme.TEXT_TERTIARY)),
+                    pill_toggle(current == "Y", on_change=self._blind_flip),
+                    ft.Text("Y", style=theme.mono(
+                        size=10.5, color=theme.INK if current == "Y"
+                        else theme.TEXT_TERTIARY)),
+                ],
+                spacing=6, tight=True,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            )
+        else:
+            ab_row = ft.Row(
+                [
+                    ft.Text("A", style=theme.mono(size=10.5)),
+                    pill_toggle(self._player.eq_on, on_change=self._set_ab),
+                    ft.Text("B·EQ", style=theme.mono(size=10.5)),
+                ],
+                spacing=6, tight=True,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            )
+
+        rows: list[ft.Control] = [
+            ft.Row(
                 [
                     ft.Text("PREVIEW · A/B", style=theme.mono(size=9.5)),
-                    ft.Row(
-                        [play_button, ft.Container(expand=True), ab_row],
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ft.Container(expand=True),
+                    Pressable(
+                        ft.Container(
+                            content=ft.Text(
+                                "exit blind" if self._blind is not None else "blind test",
+                                style=theme.mono(size=9.5, color=theme.INK),
+                            ),
+                            border=ft.Border.all(1, theme.BORDER_DEFAULT),
+                            border_radius=theme.RADIUS_PILL,
+                            padding=ft.Padding(left=10, right=10, top=4, bottom=4),
+                        ),
+                        on_press=self._toggle_blind,
                     ),
                 ],
-                spacing=8,
-                tight=True,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
+            ft.Row(
+                [play_button, ft.Container(expand=True), ab_row],
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+        ]
+        if self._blind is not None:
+            guess = [
+                ft.Text("WHICH HAS EQ?", style=theme.mono(size=9.5)),
+                ft.Container(expand=True),
+            ]
+            for choice in ("X", "Y"):
+                guess.append(
+                    Pressable(
+                        ft.Container(
+                            content=ft.Text(choice, style=theme.mono(
+                                size=10.5, color=theme.INK)),
+                            border=ft.Border.all(1, theme.BORDER_DEFAULT),
+                            border_radius=theme.RADIUS_PILL,
+                            padding=ft.Padding(left=12, right=12, top=4, bottom=4),
+                        ),
+                        on_press=(lambda c: lambda e: self._blind_guess(c))(choice),
+                    )
+                )
+            rows.append(ft.Row(guess, spacing=6,
+                               vertical_alignment=ft.CrossAxisAlignment.CENTER))
+            if self._blind.get("result"):
+                rows.append(ft.Text(self._blind["result"], style=theme.sans(
+                    size=12, weight=ft.FontWeight.W_400,
+                    color=theme.TEXT_SECONDARY)))
+
+        return ft.Container(
+            content=ft.Column(rows, spacing=8, tight=True),
             bgcolor=ft.Colors.WHITE,
             border_radius=10,
             padding=ft.Padding(left=12, right=12, top=10, bottom=10),
@@ -204,7 +264,8 @@ class DacPanel(ft.Container):
         def worker():
             try:
                 self._player.prepare(self._state.bands, self._get_preamp())
-                self._player.set_eq(True)
+                blind = self._blind
+                self._player.set_eq(True if blind is None else blind["eq_is_x"])
                 self._player.start()
             except Exception:
                 pass  # no audio device / portaudio missing: stay stopped
@@ -219,6 +280,53 @@ class DacPanel(ft.Container):
 
     def _set_ab(self, value: bool) -> None:
         self._player.set_eq(value)
+        self.refresh()
+        self.update()
+
+    # -- GD5 blind A/B test: anti-placebo, high-quality weight signal ------
+
+    def _toggle_blind(self, e=None) -> None:
+        if self._blind is not None:
+            self._blind = None
+            self._player.set_eq(True)
+        else:
+            self._blind = {"eq_is_x": random.random() < 0.5, "current": "X",
+                           "result": None}
+            self._player.set_eq(self._blind["eq_is_x"])
+            if not self._player.playing:
+                self._toggle_play()
+                return  # _toggle_play refreshes when ready
+        self.refresh()
+        self.update()
+
+    def _blind_flip(self, to_y: bool) -> None:
+        if self._blind is None:
+            return
+        self._blind["current"] = "Y" if to_y else "X"
+        is_eq = self._blind["eq_is_x"] == (self._blind["current"] == "X")
+        self._player.set_eq(is_eq)
+        self.refresh()
+        self.update()
+
+    def _blind_guess(self, choice: str) -> None:
+        if self._blind is None:
+            return
+        eq_side = "X" if self._blind["eq_is_x"] else "Y"
+        correct = choice == eq_side
+        self._blind["result"] = (
+            f"Correct — {eq_side} had your EQ. That difference is real."
+            if correct
+            else f"Not this time — {eq_side} had the EQ. Maybe soften the change?"
+        )
+        # High-quality signal for the learning loop (AI_ROADMAP GD4).
+        profile = self._state.profile
+        if profile is not None:
+            profile.record_history(action="blind_ab", guess=choice,
+                                   eq_side=eq_side, correct=correct)
+            try:
+                ProfileStore().save(profile)
+            except OSError:
+                pass
         self.refresh()
         self.update()
 

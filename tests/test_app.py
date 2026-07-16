@@ -325,6 +325,54 @@ class TestProfileStore:
         assert player._eq is not None and len(player._eq) == len(noise)
         assert np.max(np.abs(player._eq)) <= 1.0
 
+    def test_learn_accept_merges_and_records_history(self):
+        profile = Profile()
+        f = _warmth(gain=3.0)
+        profile.learn_accept("HD 650", "warmer please", [("warmth", "increase", 0.75)], [f])
+        assert len(profile.filter_deltas) == 1
+        assert profile.filter_deltas[0].weight == WEIGHT_INITIAL
+        entry = profile.history[-1]
+        assert entry["accepted"] and entry["headphone"] == "HD 650"
+        assert entry["tags"] == ["warmth"]
+        assert entry["applied"][0]["fc"] == 200.0
+        # Second confirmation: EMA on gain, weight bumped.
+        profile.learn_accept("HD 650", "warmer", [("warmth", "increase", 1.0)],
+                             [_warmth(gain=4.0)])
+        d = profile.filter_deltas[0]
+        assert abs(d.gain - (EMA_ALPHA * 4.0 + (1 - EMA_ALPHA) * 3.0)) < 1e-9
+        assert abs(d.weight - (WEIGHT_INITIAL + WEIGHT_STEP)) < 1e-9
+
+    def test_learn_undo_weakens_delta(self):
+        profile = Profile()
+        profile.filter_deltas.append(_warmth(weight=0.6))
+        profile.learn_undo("HD 650", [("warmth", "increase", 0.5)])
+        assert abs(profile.filter_deltas[0].weight - (0.6 - WEIGHT_STEP)) < 1e-9
+        assert profile.history[-1]["accepted"] is False
+
+    def test_scope_rule_demotes_and_promotes(self):
+        profile = Profile()
+        profile.filter_deltas.append(_warmth())
+        # Confirmed twice, only ever on HD 650 -> that headphone's flaw.
+        for _ in range(2):
+            profile.record_history(headphone="HD 650", tags=["warmth"], accepted=True)
+        profile.apply_scope_rule()
+        assert profile.filter_deltas[0].scope == "headphone:HD 650"
+        # Later confirmed on a second headphone -> back to a global taste.
+        profile.record_history(headphone="HD 600", tags=["warmth"], accepted=True)
+        profile.apply_scope_rule()
+        assert profile.filter_deltas[0].scope == "global"
+
+    def test_settings_store_roundtrip_and_defaults(self, tmp_path):
+        import settings_store
+
+        path = str(tmp_path / "config.json")
+        assert settings_store.load(path) == settings_store.DEFAULTS
+        settings_store.save({"provider": "anthropic", "junk": "x"}, path)
+        loaded = settings_store.load(path)
+        assert loaded["provider"] == "anthropic"
+        assert "junk" not in loaded
+        assert loaded["base_url"] == settings_store.DEFAULTS["base_url"]
+
     def test_taste_tilts_two_headphones_the_same_way(self):
         """GD3.4 acceptance: one profile applied to two different headphones
         tilts both results toward the preference."""

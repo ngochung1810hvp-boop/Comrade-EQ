@@ -50,6 +50,9 @@ class ChatMessage:
     diff_title: str | None = None
     diff_detail: str | None = None
     snapshot: list[float] | None = None
+    # GD5 learning loop: tags behind an applied proposal, so undo can weaken
+    # the matching preference deltas (negative signal).
+    tags: list | None = None
 
 
 @dataclass

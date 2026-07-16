@@ -15,6 +15,7 @@ import flet as ft
 
 import theme
 from ai_engine import engine
+from profile_store import Profile, ProfileStore
 from state import AppState, ChatMessage
 from ui.widgets import Pressable, chip
 
@@ -86,6 +87,10 @@ def chat_overlay(page: ft.Page, state: AppState, get_headphone, on_bands_changed
                 return
             engine.restore_snapshot(state.bands, msg.snapshot)
             msg.snapshot = None
+            # GD5: undo is a negative signal — weaken the matching deltas.
+            if state.profile is not None and msg.tags:
+                state.profile.learn_undo(get_headphone(), msg.tags)
+                ProfileStore().save(state.profile)
             refresh_messages()
             on_bands_changed()
             toast("Change undone")
@@ -129,11 +134,28 @@ def chat_overlay(page: ft.Page, state: AppState, get_headphone, on_bands_changed
             blocks.append(_applied_card(msg))
         return _assistant_bubble(ft.Column(blocks, spacing=8, tight=True))
 
+    def _welcome_text() -> str:
+        # GD5: proactive suggestion from history stats — surface the user's
+        # most-confirmed taste instead of a generic greeting.
+        profile = state.profile
+        if profile is not None and profile.filter_deltas:
+            top = max(profile.filter_deltas, key=lambda d: d.weight)
+            if top.weight > 0:
+                direction = "cut" if top.gain < 0 else "lift"
+                hint = (
+                    f"You usually {direction} around {top.fc:g} Hz "
+                    f"({top.tag.replace('_', ' ')})."
+                )
+                if not state.taste_on:
+                    hint += " Turn on TASTE in the header to apply your preference automatically."
+                return f"{WELCOME}\n{hint}"
+        return WELCOME
+
     def refresh_messages():
         message_list.controls.clear()
         if not state.messages:
             message_list.controls.append(_assistant_message(
-                ChatMessage(role="assistant", text=WELCOME)))
+                ChatMessage(role="assistant", text=_welcome_text())))
         for msg in state.messages:
             if msg.role == "user":
                 message_list.controls.append(_user_bubble(msg.text))
@@ -169,12 +191,26 @@ def chat_overlay(page: ft.Page, state: AppState, get_headphone, on_bands_changed
                 names = ", ".join(dict.fromkeys(
                     t.replace("_", " ") for t, _, _ in proposal.tags)) or "EQ"
                 diff_title = f"Adjusted: {names}"
+        # GD5: an applied proposal is an accept — merge it into the taste
+        # memory (EMA + weight) and persist, so new headphones inherit it
+        # without another LLM call.
+        if snapshot is not None and proposal.filters:
+            if state.profile is None:
+                state.profile = Profile(
+                    name=state.profile_name.strip() or "default"
+                )
+                state.profile_name = state.profile.name
+            state.profile.learn_accept(
+                headphone, text, proposal.tags, proposal.filters
+            )
+            ProfileStore().save(state.profile)
         reply = proposal.reply
         if proposal.note:
             reply = f"{reply}\n{proposal.note}"
         state.messages.append(ChatMessage(
             role="assistant", text=reply,
             diff_title=diff_title, diff_detail=diff_detail, snapshot=snapshot,
+            tags=proposal.tags,
         ))
         typing_row.visible = False
         refresh_messages()

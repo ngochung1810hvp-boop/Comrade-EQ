@@ -12,9 +12,11 @@ import theme
 from equalize import Options, compute, list_targets
 from exporters import export_file
 from state import AppState
+from ui.settings_modal import open_settings_modal
 from ui.tune.band_strip import BandStripCard
 from ui.tune.chat_drawer import chat_overlay
 from ui.tune.dac_panel import DacPanel
+from ui.tune.profiles_modal import open_profiles_modal
 from ui.tune.export_bar import ExportBar
 from ui.tune.graph import GraphCard
 from ui.tune.save_modal import open_save_modal
@@ -337,6 +339,22 @@ def tune_screen(page: ft.Page, state: AppState, devices, on_devices) -> ft.Contr
             on_saved=lambda path: toast(f"Saved {state.profile_name.strip()}"),
         )
 
+    def _profile_loaded(profile):
+        """A loaded profile restores bands/target and becomes the taste."""
+        _ensure_fr(state, targets)
+        refresh_target_control()
+        target_button_holder.update()
+        refresh_taste_toggle()
+        taste_toggle_holder.update()
+        strip.refresh()
+        strip.update()
+        bands_changed()
+        toast(f"Loaded {profile.name}")
+
+    def open_profiles(e=None):
+        open_profiles_modal(page, state, on_loaded=_profile_loaded,
+                            open_save=open_save)
+
     rail = ft.Container(
         width=66,
         bgcolor=theme.SURFACE_SUNKEN,
@@ -345,8 +363,12 @@ def tune_screen(page: ft.Page, state: AppState, devices, on_devices) -> ft.Contr
             [
                 _rail_button(ft.Icons.TUNE, active=True),
                 _rail_button(ft.Icons.HEADPHONES_OUTLINED, active=False, on_press=on_devices),
-                _rail_button(ft.Icons.BOOKMARK_OUTLINE, active=False, on_press=open_save),
+                _rail_button(ft.Icons.BOOKMARK_OUTLINE, active=False, on_press=open_profiles),
                 ft.Container(expand=True),
+                _rail_button(
+                    ft.Icons.SETTINGS_OUTLINED, active=False,
+                    on_press=lambda e: open_settings_modal(page, toast),
+                ),
                 _rail_button(
                     ft.Icons.HELP_OUTLINE, active=False,
                     on_press=lambda e: toast("Help arrives with the assistant"),

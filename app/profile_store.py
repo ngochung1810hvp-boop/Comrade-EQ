@@ -152,6 +152,62 @@ class Profile:
         self.history.append(entry)
         return entry
 
+    # -- GD5 learning loop (AI_ROADMAP section 5) ---------------------------
+
+    def learn_accept(
+        self,
+        headphone: str | None,
+        feedback: str,
+        tags: list,
+        filters: list,
+    ) -> None:
+        """An applied proposal is a positive signal: EMA-merge its deltas
+        into the taste memory and log the event."""
+        for f in filters:
+            self.merge_delta(f)
+        self.record_history(
+            headphone=headphone,
+            feedback=feedback,
+            tags=[t for t, _, _ in tags],
+            applied=[{"fc": f.fc, "q": f.q, "gain": f.gain} for f in filters],
+            accepted=True,
+        )
+        self.apply_scope_rule()
+
+    def learn_undo(self, headphone: str | None, tags: list) -> None:
+        """An undo is a negative signal: weaken the matching deltas."""
+        tag_names = {t for t, _, _ in tags}
+        for delta in self.filter_deltas:
+            if delta.tag in tag_names:
+                delta.weight = float(max(0.0, delta.weight - WEIGHT_STEP))
+        self.record_history(
+            headphone=headphone, tags=sorted(tag_names), accepted=False
+        )
+
+    def apply_scope_rule(self) -> None:
+        """AI_ROADMAP GD3.4: a tag confirmed on only one headphone is that
+        headphone's flaw, not a general taste — demote it to
+        headphone:<name>; a tag confirmed on 2+ headphones is promoted
+        (back) to global."""
+        seen: dict[str, set] = {}
+        counts: dict[str, int] = {}
+        for entry in self.history:
+            if not entry.get("accepted") or not entry.get("headphone"):
+                continue
+            for tag in entry.get("tags", []):
+                seen.setdefault(tag, set()).add(entry["headphone"])
+                counts[tag] = counts.get(tag, 0) + 1
+        for delta in self.filter_deltas:
+            headphones = seen.get(delta.tag, set())
+            if len(headphones) >= 2:
+                delta.scope = "global"
+            elif (
+                delta.scope == "global"
+                and len(headphones) == 1
+                and counts.get(delta.tag, 0) >= 2
+            ):
+                delta.scope = f"headphone:{next(iter(headphones))}"
+
     def to_dict(self) -> dict:
         f, curve = self.render_curve()
         return {
